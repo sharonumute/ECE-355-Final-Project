@@ -197,9 +197,10 @@ void EXTI0_1_IRQHandler()
 			TIM2->CR1 = ((uint16_t)0x008C);
 			CountRegister = TIM2->CNT;
 			//CountRegister = TIM_CNT_CNT;
+			
 			//Calculation
-			SignalPeriod = CountRegister / SystemCoreClock;
-			SignalFrequency = CountRegister * SystemCoreClock;
+			SignalPeriod = SystemCoreClock /CountRegister;
+			SignalFrequency = 1/ SignalPeriod;
 
 			trace_printf("Signal Period: %u \n", SignalPeriod);
 			trace_printf("Signal Frequency: %u \n", SignalFrequency);
