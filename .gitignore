@@ -1,5 +1,5 @@
 
-# Created by https://www.gitignore.io/api/c,windows,eclipse
+# Created by https://www.gitignore.io/api/c,windows,eclipse,code
 
 ### C ###
 # Prerequisites
@@ -55,6 +55,13 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+### Code ###
+# Visual Studio Code - https://code.visualstudio.com/
+.settings/
+.vscode/
+tsconfig.json
+jsconfig.json
+
 ### Eclipse ###
 
 .metadata
@@ -65,7 +72,6 @@ tmp/
 *.swp
 *~.nib
 local.properties
-.settings/
 .loadpath
 .recommenders
 
@@ -151,4 +157,4 @@ $RECYCLE.BIN/
 *.lnk
 
 
-# End of https://www.gitignore.io/api/c,windows,eclipse
+# End of https://www.gitignore.io/api/c,windows,eclipse,code
