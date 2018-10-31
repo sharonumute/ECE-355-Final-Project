@@ -47,6 +47,8 @@ void myTIM2_Init(void);
 void myEXTI_Init(void);
 
 // Your global variables...
+uint32_t TimerTriggered;
+
 
 int
 main(int argc, char* argv[])
@@ -125,19 +127,19 @@ void myEXTI_Init()
 {
 	/* Map EXTI1 line to PA1 */
 	// Relevant register: SYSCFG->EXTICR[0]
-	SYSCFG->EXTICR[0]=((uint32_t)0x00000010);
+	SYSCFG->EXTICR[0] &= 0x0000FF0F;
 
 	/* EXTI1 line interrupts: set rising-edge trigger */
 	// Relevant register: EXTI->RTSR
-	EXTI->RTSR = ((uint32_t)0x00000001);
+	EXTI->RTSR |= EXTI_RTSR_TR1;
 
 	/* Unmask interrupts from EXTI1 line */
 	// Relevant register: EXTI->IMR
-	EXTI->IMR = ((uint32_t)0x00000001);
+	EXTI->IMR |= EXTI_IMR_MR1;
 
 	/* Assign EXTI1 interrupt priority = 0 in NVIC */
 	// Relevant register: NVIC->IP[1], or use NVIC_SetPriority
-	NVIC_SetPriority(EXTI0_1_IRQn, 0);
+	NVIC_SetPriority(EXTI0_1_IRQn,0);
 
 	/* Enable EXTI1 interrupts in NVIC */
 	// Relevant register: NVIC->ISER[0], or use NVIC_EnableIRQ
@@ -168,9 +170,9 @@ void TIM2_IRQHandler()
 void EXTI0_1_IRQHandler()
 {
 	// Your local variables...
-	uint16_t CountRegister;
-	unsigned int SignalPeriod;
-	unsigned int SignalFrequency;
+	uint32_t CountRegister;
+	double SignalPeriod;
+	double SignalFrequency;
 
 	/* Check if EXTI1 interrupt pending flag is indeed set */
 	if ((EXTI->PR & EXTI_PR_PR1) != 0)
@@ -190,22 +192,38 @@ void EXTI0_1_IRQHandler()
 		//	  period and frequency.
 		//
 		// 2. Clear EXTI1 interrupt pending flag (EXTI->PR).
-		if ((EXTI->RTSR) != 0){
-			TIM2->CNT= ((uint16_t)0x0002);
-			TIM2->CR1 |= TIM_CR1_CEN;
-		}else{
-			TIM2->CR1 = ((uint16_t)0x008C);
-			CountRegister = TIM2->CNT;
-			//CountRegister = TIM_CNT_CNT;
-			
-			//Calculation
-			SignalPeriod = SystemCoreClock /CountRegister;
-			SignalFrequency = 1/ SignalPeriod;
+		if (EXTI->PR & EXTI_PR_PR1){
 
-			trace_printf("Signal Period: %u \n", SignalPeriod);
-			trace_printf("Signal Frequency: %u \n", SignalFrequency);
+
+			if(TimerTriggered ==0){
+				CountRegister = 0;
+				TimerTriggered =1;
+				TIM2->CNT= ((uint16_t)0x0000);
+				TIM2->CR1 |= TIM_CR1_CEN;
+			}else{
+				TimerTriggered =0;
+				TIM2->CR1 &= ~(TIM_CR1_CEN);
+				EXTI->IMR &= ~(EXTI_IMR_MR1);
+				CountRegister = TIM2->CNT;
+
+				if(CountRegister < SystemCoreClock){
+
+					SignalFrequency = ((double)SystemCoreClock)/((double)CountRegister);
+					SignalPeriod = 1/SignalFrequency;
+
+					trace_printf("Signal Period: %f \n", (float)(SignalPeriod));
+					trace_printf("Signal Frequency: %f \n", (float)SignalFrequency);
+				}else{
+					SignalPeriod = ((double)CountRegister)/((double)SystemCoreClock);
+					SignalFrequency = 1/ SignalPeriod;
+
+					trace_printf("Signal Period: %f \n", (float)SignalPeriod );
+					trace_printf("Signal Frequency: %f \n", (float)(SignalFrequency));
+				}
+				EXTI->IMR |= (EXTI_IMR_MR1);
+			}
+			EXTI->PR |= EXTI_PR_PR1 ;
 		}
-		EXTI->PR &= ~(EXTI_PR_PR0);
 	}
 }
 
