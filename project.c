@@ -42,32 +42,16 @@
 /* Clock prescaler for TIM2 timer: no prescaling */
 #define myTIM2_PRESCALER ((uint16_t)0x0000)
 #define ONE_MS_PER_TICK_PRESCALER ((uint16_t)((SystemCoreClock - 1) / 1000))
+
 /* Maximum possible setting for overflow */
 #define myTIM2_PERIOD ((uint32_t)0xFFFFFFFF)
-
-#ifdef USE_FULL_ASSERT
-#define assert_param(expr) ((expr) ? (void)0 : assert_failed((uint8_t *)__FILE__, __LINE__))
-void assert_failed(uint8_t* file, uint32_t line);
-#else
-#define assert_param(expr) ((void)0)
-#endif // USE_FULL_ASSERT
-
-#define EPSILON ((float)0.00001)
-#define float_eq(f1, f2) (((f1 - f2) < EPSILON) || ((f2 - f1) < EPSILON))
-#define float_geq(f1, f2) ((f1 > f2) || float_eq(f1, f2))
-#define float_leq(f1, f2) ((f1 < f2) || float_eq(f1, f2))
-
-#if VERBOSE
-#define LCD_UPDATE_PERIOD_MS ((uint32_t)2500)
-#else
 #define LCD_UPDATE_PERIOD_MS ((uint32_t)250)
-#endif
-/* Circuit tuning params */
+
+/* Circuit tuning parameterss */
 #define RESISTANCE_MAX_VALUE (5000.0) // PBMCUSLK uses a 5k pot
 #define ADC_MAX_VALUE ((float)(0xFFF)) // ADC bit resolution (12 by default)
 #define DAC_MAX_VALUE ((float)(0xFFF)) // DAC bit resolution (12 by default)
-#define DAC_MAX_VOLTAGE (2.95) // measured output from PA4 when
-                               // DAC->DHR12R1 = DAC_MAX_VALUE
+#define DAC_MAX_VOLTAGE (2.95) // measured output from PA4 when DAC->DHR12R1 = DAC_MAX_VALUE
 #define OPTO_DEADBAND_END_VOLTAGE (1.0) // voltage needed to overcome diode
 
 void myGPIOA_Init(void);
@@ -77,7 +61,6 @@ void myEXTI_Init(void);
 void myADC_Init(void);
 void myDAC_Init(void);
 uint32_t getPotADCValue(void);
-uint32_t applyOptoOffsetToDAC(uint32_t rawDAC);
 
 // Your global variables...
 float signalFrequency = 0.0;
@@ -95,21 +78,16 @@ main(int argc, char* argv[])
 	myEXTI_Init();		/* Initialize EXTI */
 	myADC_Init();
 	myDAC_Init();
-	LCD_Init();
+	LCD_Config();
 	myTIM16_Init();
 
 	while (1)
 	{
 		/*Get ADC value*/
 		uint32_t potADCValue = getPotADCValue();
-
-        /* Use ADC value for DAC
-		   Offset to avoid output voltages around 0 - 1v.
-           To allow all values of pot to correspond to a change in timer frequency */
-        uint32_t timerControlDACValue = applyOptoOffsetToDAC(potADCValue);
-
+		
         /* Update the DAC value */
-        DAC->DHR12R1 = timerControlDACValue;
+        DAC->DHR12R1 = potADCValue;
 
         /* Convert to resistance range */
         float normalizedPotADC = (((float)potADCValue) / ADC_MAX_VALUE);
@@ -289,8 +267,7 @@ void TIM16_IRQHandler()
 {
     /* Check if update interrupt flag is set */
     if ((TIM16->SR & TIM_SR_UIF) != 0) {
-        LCD_UpdateFreq(signalFrequency);
-        LCD_UpdateResistance(resistance);
+		LCD_SetValues(resistance, signalFrequency);
 
         /* Clear update interrupt flag */
         TIM16->SR &= ~(TIM_SR_UIF);
@@ -359,24 +336,6 @@ uint32_t getPotADCValue(){
 
     /* Apply data mask to data register */
     return ((ADC1->DR) & ADC_DR_DATA);
-}
-
-uint32_t applyOptoOffsetToDAC(uint32_t rawDAC){
-    /* Map the DAC value -> voltage range */
-    float normalizedDAC = rawDAC / DAC_MAX_VALUE;
-    float outputVoltageRange = DAC_MAX_VOLTAGE - OPTO_DEADBAND_END_VOLTAGE;
-    float outputVoltage = (normalizedDAC * outputVoltageRange) + OPTO_DEADBAND_END_VOLTAGE;
-
-    /* Check that output mapping function produced valid output */
-    assert_param(float_geq(outputVoltage, 0.0));
-    assert_param(float_geq(outputVoltage, OPTO_DEADBAND_END_VOLTAGE));
-    assert_param(float_leq(outputVoltage, DAC_MAX_VOLTAGE));
-
-    /* Convert voltage back to DAC level */
-    float normalizedOutputVoltage = outputVoltage / DAC_MAX_VOLTAGE;
-    float outputDACValue = normalizedOutputVoltage * DAC_MAX_VALUE;
-
-    return ((uint32_t)outputDACValue);
 }
 
 #pragma GCC diagnostic pop
