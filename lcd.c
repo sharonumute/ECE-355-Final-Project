@@ -1,4 +1,3 @@
-// from https://github.com/trstephen/ceng355/blob/master/src/lcd.c
 #include <stdio.h>
 #include "stm32f0xx_gpio.h"
 #include "stm32f0xx_rcc.h"
@@ -8,402 +7,275 @@
 #include "assert.h"
 #include "lcd.h"
 
-// ----------------------------------------------------------------------------
-//                      STRUCTS
-// ----------------------------------------------------------------------------
-typedef struct metricFloat {
-    float value;
-    uint32_t multiplier;
-    char* prefix;
-} metricFloat;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
+#pragma GCC diagnostic ignored "-Wreturn-type"
 
-// ----------------------------------------------------------------------------
-//                      DEFINES
-// ----------------------------------------------------------------------------
+void LCD_SetValues(float resistance, float frequency)
+{
 
-#ifndef VERBOSE
-#define VERBOSE 0
-#endif // VERBOSE
+	LCD_SetPosition(1,1);
+	
+	Write_Text_to_lcd("F:");
 
-#ifdef USE_FULL_ASSERT
-#define assert_param(expr) ((expr) ? (void)0 : assert_failed((uint8_t *)__FILE__, __LINE__))
-void assert_failed(uint8_t* file, uint32_t line);
-#else
-#define assert_param(expr) ((void)0)
-#endif // USE_FULL_ASSERT
+	Write_numb_to_lcd(frequency);
 
-// Maps to EN and RS bits for LCD
-#define LCD_ENABLE (0x80)
-#define LCD_DISABLE (0x0)
-#define LCD_COMMAND (0x0)
-#define LCD_DATA (0x40)
+	Write_Text_to_lcd("Hz");
 
-// LCD Config commands
-#define LCD_CURSOR_ON (0x2)
-#define LCD_MOVE_CURSOR_CMD (0x80)
-#define LCD_CLEAR_CMD (0x1)
-#define LCD_ROW_MIN (1)
-#define LCD_ROW_MAX (2)
-#define LCD_COL_MIN (1)
-#define LCD_COL_MAX (8)
-#define LCD_FIRST_ROW_OFFSET (0x0)
-#define LCD_SECOND_ROW_OFFSET (0x40)
+	LCD_SetPosition(2,1);
 
-// Positions on the LCD character table
-#define SYMBOL_OMEGA (0xF4)
-#define SYMBOL_HZ (0x00)
+	Write_Text_to_lcd("R:");
 
-#define DELAY_PRESCALER_1KHZ (47999) /* 48 MHz / (47999 + 1) = 1 kHz */
-#define DELAY_PERIOD_DEFAULT (100) /* 100 ms */
+	Write_numb_to_lcd(resistance);
 
-// ----------------------------------------------------------------------------
-//                      IMPLEMENTATION
-// ----------------------------------------------------------------------------
+	Write_Text_to_lcd("Oh");
 
-void LCD_Init(void){
-    // Configure GPIOB to control LCD via SPI
-    myGPIOB_Init();
-    mySPI_Init();
+	time_Delay(250);
 
-    // We'll need the delay timer to wait for some operations (clear) to
-    // complete on the LCD. The sane way to do this is to read the LCD status
-    // but the PBMCUSLK hard-wires the LCD to write mode :(
-    DELAY_Init();
+}
 
-    // Configure the internal LCD controls
-    //
-    // PBMCUSLK has a shift register connected to the LCD like:
-    //
-    //    ______________HC 595______________
-    //    | Q7  Q6  Q5  Q4  Q3  Q2  Q1  Q0 |  0   0   0   0
-    //    |=|===|===|===|===|===|===|===|==‾‾‾|‾‾‾|‾‾‾|‾‾‾|‾‾|
-    //    | EN  RS  NC  NC  D7  D6  D5  D4    D3  D2  D1  D0 |
-    //    ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾HD44780 LCD Controller‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-    //
-    // On initialization, the LCD may be in 4b or 8b mode. We need to change it
-    // to 4b mode to use LCD_SendWord, which assumes 4b mode and sends high and
-    // low half-words.
-    //
-    // If the LCD is in 8b mode:
-    //   1. Send 0x0, interpreted as command 0x00 which has no effect
-    //   2. Send 0x2, interpreted as command 0x20 which changes to 4b mode
-    //
-    // If the LCD is in 4b mode:
-    //   1. Send 0x0, interpreted as high half-word
-    //   2. Send 0x2, interpreted as lower half-word, command 0x02 is "send
-    //      cursor home"
-    // Since we entered in 4b mode we can continue with the rest of the
-    // initialization.
-    // Note, "cursor home" has a 1.52 ms execution time so we add a 2ms delay to
-    // ensure the LCD is ready to receive the rest of the config.
-    LCD_SendWord(LCD_COMMAND, 0x2);
-    DELAY_Set(2);
-    // Now we're in 4b mode we can do the rest of the LCD config
-    // https://en.wikipedia.org/wiki/Hitachi_HD44780_LCD_controller#Instruction_set
-    // 1. set 4b, 2 line, 5x7 font
-    // 2. display on, blink off, cursor?
-    // 3. cursor auto-increment, no display shift
-    uint8_t showCursorState = VERBOSE ? LCD_CURSOR_ON : 0x0;
-    LCD_SendWord(LCD_COMMAND, 0x28);
-    LCD_SendWord(LCD_COMMAND, 0x0C | showCursorState);
-    LCD_SendWord(LCD_COMMAND, 0x06);
-    LCD_Clear();
+void LCD_Config()
+{
+	myGPIOB_Init(); /* Initialize GPIOB */
+	mySPI_Init();	/* Initialize SPI */
+	LCD_Init();		 /* Initialize LCD */
+	trace_printf("\n LCD initialization complete\n");
+}
 
-    LCD_LoadCustomSymbols();
 
-    // Write the initial units and resistance / freq placeholders manually
-    //   "  ???  H"
-    //   "  ???  Ω"
-    LCD_MoveCursor(LCD_FREQ_ROW, 3);
-    LCD_SendText("???");
-    LCD_MoveCursor(LCD_FREQ_ROW, 8);
-    LCD_SendWord(LCD_DATA, SYMBOL_HZ);
+void LCD_Init()
+{
 
-    LCD_MoveCursor(LCD_RESISTANCE_ROW, 3);
-    LCD_SendText("???");
-    LCD_MoveCursor(LCD_RESISTANCE_ROW, 8);
-    LCD_SendWord(LCD_DATA, SYMBOL_OMEGA);
+
+	Write_HC595(0x02); // Let EN = 0, RS = 0, DB[7:4] = 0010
+	Write_HC595(0x82); // Let EN = 1, RS = 0, DB[7:4] = 0010
+	Write_HC595(0x02); // Let EN = 0, RS = 0, DB[7:4] = 0010
+
+	time_Delay(20);
+
+	Write_cmd_to_lcd(0x28); // 4­bits, 2 lines, 5x7 font
+	Write_cmd_to_lcd(0x0E); // Display ON, No cursors
+	Write_cmd_to_lcd(0x06); // Entry mode­ Auto­increment, No Display shifting
+	Write_cmd_to_lcd(0x01); // Clear display
+
+	time_Delay(20);
+}
+
+void time_Delay(uint32_t d)
+{
+
+	TIM3->CNT |= 0x00000000;		/* Clear timer */
+
+	TIM3->ARR = d;					/* Time­out value */
+
+    TIM3->EGR |= 0x0001; 			/* Update registers */
+
+    TIM3->CR1 |= TIM_CR1_CEN;		/* Start timer */
+
+
+	while ((TIM3->SR & TIM_SR_UIF) == 0) {} /* Wait for time­out delay */
+
+  	TIM3->SR &= ~(TIM_SR_UIF);		/* Clear update interrupt flag */
+  	TIM3 -> CR1	&= ~(TIM_CR1_CEN);  /* Stop timer */
+}
+
+
+void Write_cmd_to_lcd(char cmd)
+{
+	char Low_Nibble = (cmd & 0x0f);
+	char High_Nibble = ((cmd & 0xf0) >> 4);
+	//High
+	Write_HC595(0x00 + High_Nibble); // Let RS = 0 and EN = 0
+	Write_HC595(0x80 + High_Nibble); // Let RS = 0 and EN = 1
+	Write_HC595(0x00 + High_Nibble); // Let RS = 0 and EN = 0
+
+
+	//Low
+	Write_HC595(0x00 + Low_Nibble); // Let RS = 0 and EN = 0
+	Write_HC595(0x80 + Low_Nibble); // Let RS = 0 and EN = 1
+	Write_HC595(0x00 + Low_Nibble); // Let RS = 0 and EN = 0
+
+}
+
+
+void Write_Data_to_lcd(char data)
+{
+	char Low_Nibble = (data & 0x0f);
+	char High_Nibble = ((data & 0xf0) >> 4);
+	//High
+	Write_HC595(0x40 + High_Nibble ); // Let RS = 1 and EN = 0
+	Write_HC595(0xc0 + High_Nibble ); // Let RS = 1 and EN = 1
+	Write_HC595(0x40 + High_Nibble ); // Let RS = 1 and EN = 0
+
+
+	//Low
+	Write_HC595(0x40 + Low_Nibble ); // Let RS = 1 and EN = 0
+	Write_HC595(0xc0 + Low_Nibble ); // Let RS = 1 and EN = 1
+	Write_HC595(0x40 + Low_Nibble ); // Let RS = 1 and EN = 0
+
+}
+
+
+void Write_HC595(char data)
+{
+
+	// LCK = 0
+	GPIOB->BRR = GPIO_Pin_4;
+
+	// Wait until not busy
+	while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY)==SET){;}
+
+	SPI_SendData8(SPI1,data);
+
+	// Wait until not busy
+	while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY)==SET){;}
+
+	// LCK = 1 (rising edge)
+	GPIOB->BSRR = GPIO_Pin_4;
+
+	//time_Delay(2); // 2­ms delay (slow LCD)
+
+
+}
+
+
+void LCD_SetPosition(unsigned short x, unsigned short y)
+
+{
+	unsigned short temp = 127 + y;
+	if (x == 2)
+		temp = temp + 64;
+	Write_cmd_to_lcd(temp); //moves cursor
+}
+
+
+
+void Write_Text_to_lcd(char *StrData)
+{
+	unsigned short p = 0;
+	unsigned short q = strlen(StrData); //Calculates the string length
+	while(p < q){
+		Write_Data_to_lcd(StrData[p]);  		//Writes the string data to the LCD
+
+		p++;
+	}
+}
+
+
+void Write_numb_to_lcd(uint16_t num)
+{
+	char Pot_st[5]={'0','0','0','0',0};
+	Convert_to_ascii(num,Pot_st); 			//Converters the num in to ASCII and puts it in the array
+	Write_Text_to_lcd(Pot_st);
+}
+
+
+//Converts integer to character
+void Convert_to_ascii(uint16_t n, char s[])
+{
+	//uint16_t count = 3;
+	//off set by 0x30 or '0' for dec to ascii
+	s[0] = n/1000 +'0';
+	s[1] =((n%1000)/100) + '0';
+	s[2] =((n%100)/10) +'0';
+	s[3] = n%10 + '0';
 }
 
 void myGPIOB_Init(void){
-    // Turn on the GPIOB clock
-    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOB, ENABLE);
+    //Clock enable
+    RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
 
-    // PB3 --AF0-> SPI MOSI
-    // PB5 --AF0-> SPI SCK
+
     GPIO_InitTypeDef GPIO_InitStruct;
-    GPIO_InitStruct.GPIO_Pin   = GPIO_Pin_3 | GPIO_Pin_5;
-    GPIO_InitStruct.GPIO_Mode  = GPIO_Mode_AF;
+
+    // RCC config
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOB,ENABLE);
+
+    // GPIO Alternate Function config
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource3, GPIO_AF_0);
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource5, GPIO_AF_0);
+
+    // Configure PB3 and PB5 alternate function
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_5;
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
     GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
-    GPIO_InitStruct.GPIO_PuPd  = GPIO_PuPd_NOPULL;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
     GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    // Configure the LCK pin for "manual" control in HC595_Write
-    GPIO_InitStruct.GPIO_Pin   = LCD_LCK_PIN;
-    GPIO_InitStruct.GPIO_Mode  = GPIO_Mode_OUT;
+    // Configure PB4 in output mode to be used as storage clock input in 74HC595
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_4;
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
     GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
-    GPIO_InitStruct.GPIO_PuPd  = GPIO_PuPd_NOPULL;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
     GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+	/* Configure pins required for SPI peripheral */
+	/* Enable clock for GPIOB peripheral */
+	RCC->AHBENR |= RCC_AHBENR_GPIOBEN;
+
+	/* Configure PB3 as alternate function [SCK]*/
+	GPIOB->MODER |= GPIO_MODER_MODER3_1;
+
+	/* Select alternate function for PB3  */
+	/* Set AFRy[3:0] to 0 to select AF0 for PB3 */
+	GPIOB->AFR[0] |= GPIO_AFRL_AFR0;
+
+	/* Configure PB4 as output [LCK] */
+	GPIOB->MODER |= GPIO_MODER_MODER4_0;
+
+	/* Ensure no pull-up/pull-down for PB4 */
+	GPIOB->PUPDR &= ~(GPIO_PUPDR_PUPDR4);
+
+	/* Configure PB5 as alternate function [MOSI]*/
+	GPIOB->MODER |= GPIO_MODER_MODER5_1;
+
+	/* Select alternate function for PB5 */
+	GPIOB->AFR[0] |= GPIO_AFRL_AFR0;
 }
 
-void LCD_LoadCustomSymbols(void){
-  char hertzPixels[8] = {
-    0b10001,
-    0b11111,
-    0b10001,
-    0b01110,
-    0b00010,
-    0b00100,
-    0b01000,
-    0b01110
-  };
-  // Sets CG RAM address
-  LCD_SendWord(LCD_COMMAND, (0x40 + SYMBOL_HZ));
-  // all subsequent data is written and auto incremented to CG RAM address
-  //each byte (represeting 1 line of the custom char) is written to byte locations
-  //64 to 71 of the CG RAM (Custom Generator Ram)
-  for(int a = 0; a < 8; a++){
-    LCD_SendWord(LCD_DATA, hertzPixels[a]);
-  }
-}
-
-void mySPI_Init(void){
-    // Turn on the SPI clock
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
-
-    SPI_InitTypeDef SPI_InitStruct;
-    SPI_InitStruct.SPI_Direction     = SPI_Direction_1Line_Tx;
-    SPI_InitStruct.SPI_Mode          = SPI_Mode_Master;
-    SPI_InitStruct.SPI_DataSize      = SPI_DataSize_8b;
-    SPI_InitStruct.SPI_CPOL          = SPI_CPOL_Low;
-    SPI_InitStruct.SPI_CPHA          = SPI_CPHA_1Edge;
-    SPI_InitStruct.SPI_NSS           = SPI_NSS_Soft;
-    SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_256;
-    SPI_InitStruct.SPI_FirstBit      = SPI_FirstBit_MSB;
-    SPI_InitStruct.SPI_CRCPolynomial = 7;
-
-    SPI_Init(SPI1, &SPI_InitStruct);
-    SPI_Cmd(SPI1, ENABLE);
-}
-
-void HC595_Write(uint8_t word){
-    // We only want to expose the register values to the LCD once the new word
-    // has loaded completely. We do this by toggling LCK, which controls whether
-    // or not the register output tracks its current contents
-
-    // Don't update the register output; LCK = 0
-    GPIOB->BRR = LCD_LCK_PIN;
-
-    // Poll SPI until its ready to receive more data
-    while (!SPI_ReadyToSend()) {
-        /* polling... */
-    };
-
-    SPI_SendData8(SPI1, word);
-
-    // Poll SPI to determine when it's finished transmitting
-    while (!SPI_DoneSending()) {
-        /* polling... */
-    };
-
-    // Update the output; LCK = 1
-    GPIOB->BSRR = LCD_LCK_PIN;
-}
-
-uint8_t SPI_ReadyToSend(void){
-    // SPI can accept more data into its TX queue if TXE = 1 OR BSY = 0
-    return ((SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE) == SET)
-            || (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY) == RESET));
-}
-
-uint8_t SPI_DoneSending(void){
-    // SPI is done sending when BSY = 0
-    return (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY) == RESET);
-}
-
-void LCD_SendWord(uint8_t type, uint8_t word){
-    // The high half of the register output is always reserved for EN and RS.
-    // To send an 8b target word we have to send it as two sequential 4b
-    // half-words, with the target half-words in the lower half of the word.
-
-    uint8_t high = ((word & 0xF0) >> 4);
-    uint8_t low = word & 0x0F;
-
-    HC595_Write(LCD_DISABLE | type | high);
-    HC595_Write(LCD_ENABLE  | type | high);
-    HC595_Write(LCD_DISABLE | type | high);
-
-    HC595_Write(LCD_DISABLE | type | low);
-    HC595_Write(LCD_ENABLE  | type | low);
-    HC595_Write(LCD_DISABLE | type | low);
-}
-
-void LCD_SendASCIIChar(const char* character){
-    LCD_SendWord(LCD_DATA, (uint8_t)(*character));
-}
-
-void LCD_SendText(char* text){
-    const char* ch = text;
-    while(*ch){
-        LCD_SendASCIIChar(ch++);
-    }
-}
-
-void LCD_SendInteger(uint8_t digit){
-    // Enforce range of 0:9
-    // No check needed for >= 0 since digit is unsigned
-    assert_param(digit <= 9);
-
-    // Digits on the ASCII table are mapped like:
-    //   0x30 -> 0
-    //   0x31 -> 1
-    //   ...
-    //   0x39 -> 9
-    uint8_t asciiDigit = 0x30 + digit;
-
-    LCD_SendWord(LCD_DATA, asciiDigit);
-}
-
-void LCD_MoveCursor(uint8_t row, uint8_t col){
-    // Check for valid row selection and assign offset
-    assert_param(row >= LCD_ROW_MIN);
-    assert_param(row <= LCD_ROW_MAX);
-
-    uint8_t rowOffset = 0x0;
-    switch (row) {
-        case 1:
-            rowOffset = LCD_FIRST_ROW_OFFSET;
-            break;
-        case 2:
-            rowOffset = LCD_SECOND_ROW_OFFSET;
-            break;
-        default:
-            break;
-    }
-
-    // Similarly, constrain allowed column input values and then shift for
-    // 0-indexing on the LCD
-    assert_param(col >= LCD_COL_MIN);
-    assert_param(col <= LCD_COL_MAX);
-
-    uint8_t colOffset = col - 1;
-
-    uint8_t moveCursorCommand = LCD_MOVE_CURSOR_CMD | rowOffset | colOffset;
-
-    LCD_SendWord(LCD_COMMAND, moveCursorCommand);
-}
-
-void LCD_Clear(void){
-    LCD_SendWord(LCD_COMMAND, LCD_CLEAR_CMD);
-    DELAY_Set(2);
-}
-
-void DELAY_Init()
+void mySPI_Init()
 {
-    // Enable timer clock
-    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+    /*Create SPI Struct*/
+    SPI_InitTypeDef SPI_InitStructInfo;
 
-    // Set timer to:
-    //   Auto reload buffer
-    //   Stop on overflow
-    //   Enable update events
-    //   Interrupt on overflow only
-    TIM3->CR1 = ((uint16_t) 0x8C);
+   /*Initialize our SPI Struct with the struct Info*/
+    SPI_InitTypeDef* SPI_InitStruct = &SPI_InitStructInfo;
 
-    TIM3->PSC = DELAY_PRESCALER_1KHZ;
-    TIM3->ARR = DELAY_PERIOD_DEFAULT;
+    //FROM DALERS SLIDES 21
+    /*Specifies the SPI unidirectional or bidirectional data mode*/
+    SPI_InitStruct->SPI_Direction= SPI_Direction_1Line_Tx;
 
-    // Update timer registers.
-    TIM3->EGR |= 0x0001;
-}
+    /*Turn Master mode on*/
+    SPI_InitStruct->SPI_Mode= SPI_Mode_Master;
 
-void DELAY_Set(uint32_t milliseconds){
-    // Clear timer
-    TIM3->CNT |= 0x0;
+    /*Set Data size*/
+    SPI_InitStruct->SPI_DataSize = SPI_DataSize_8b;
 
-    // Set timeout
-    TIM3->ARR = milliseconds;
+    /*Initialize serial clock steady state*/
+    SPI_InitStruct->SPI_CPOL = SPI_CPOL_Low;
 
-    // Update timer registers
-    TIM3->EGR |= 0x0001;
+    /*Initialize the clock active edge for the bit capture*/
+    SPI_InitStruct->SPI_CPHA = SPI_CPHA_1Edge;
 
-    // Start the timer
-    TIM3->CR1 |= TIM_CR1_CEN;
+    /*Initialize the NSS signal to be measured by hardware*/
+    SPI_InitStruct->SPI_NSS = SPI_NSS_Soft;
 
-    // Loop until interrupt flag is set by timer expiry
-    while (!(TIM3->SR & TIM_SR_UIF)) {
-        /* polling... */
-    }
+    /*Specifies the Baud Rate prescaler value which will be
+    used to configure the transmit and receive SCK clock.*/
+    SPI_InitStruct->SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_256;
 
-    // Stop the timer
-    TIM3 -> CR1 &= ~(TIM_CR1_CEN);
+    /*Specifies the data transfer to start from the MSB*/
+    SPI_InitStruct ->SPI_FirstBit= SPI_FirstBit_MSB;
 
-    // Reset the interrupt flag
-    TIM3->SR &= ~(TIM_SR_UIF);
-}
+    /*Specify the polynomial used for calculation*/
+    SPI_InitStruct ->SPI_CRCPolynomial = 7;
 
-void LCD_UpdateFreq(float freq){
-    if (freq < 1) {
-        LCD_MoveCursor(LCD_FREQ_ROW, 1);
-        LCD_SendText("<1.000 ");
-    } else if (freq > 999999999.9) {
-        LCD_MoveCursor(LCD_FREQ_ROW, 1);
-        LCD_SendText(">999.9M");
-    } else {
-        LCD_UpdateRow(LCD_FREQ_ROW, freq);
-    }
-}
+    //Initialize SPI1 with the SPI_InitStruct
+    SPI_Init(SPI1, SPI_InitStruct);
 
-void LCD_UpdateResistance(float resistance){
-    if (resistance < 1) {
-        LCD_MoveCursor(LCD_RESISTANCE_ROW, 1);
-        LCD_SendText("<1.000 ");
-    } else {
-        LCD_UpdateRow(LCD_RESISTANCE_ROW, resistance);
-    }
-}
-
-void LCD_UpdateRow(uint8_t row, float val){
-    // Determine the metric prefix to use
-    metricFloat metricVal;
-
-    // We assume val >= 1.0
-    if (val < 999.9) {
-        metricVal.prefix = " ";
-        metricVal.multiplier = 1;
-    } else if (val < 999999.9) {
-        metricVal.prefix = "k";
-        metricVal.multiplier = 1000;
-    } else if (val < 999999999.9) {
-        metricVal.prefix = "M";
-        metricVal.multiplier = 1000 * 1000;
-    }
-
-    // Scale val for metric representation
-    metricVal.value = val / metricVal.multiplier;
-
-    // Determine number of decimal places to display by removing the part of
-    // the number greater than 0 from the total number of available columns.
-    // The remainder will go to the decimal;
-    // TODO: Dynamically determine precision range from LCD_MAX_DIGIT_COLS
-    char* floatPrecisionFormat;
-    if (metricVal.value < 10) {
-        floatPrecisionFormat = "%.3f"; // 1.234
-    } else if (metricVal.value < 100) {
-        floatPrecisionFormat = "%.2f"; // 12.34
-    } else {
-        floatPrecisionFormat = "%.1f"; // 123.4
-    }
-
-    // Convert our float to a printable string
-    // Allocate size for all digits + decimal
-    char printableVal[LCD_MAX_DIGIT_COLS + 1];
-    sprintf(printableVal, floatPrecisionFormat, metricVal.value);
-
-    LCD_MoveCursor(row, 1);
-    LCD_SendText(" "); // overwrite over/under range symbol
-    LCD_SendText(printableVal);
-    LCD_SendText(metricVal.prefix);
+    //Enable SPI1
+    SPI_Cmd(SPI1, ENABLE);
 }
