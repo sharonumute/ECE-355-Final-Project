@@ -41,33 +41,30 @@
 
 /* Clock prescaler for TIM2 timer: no prescaling */
 #define myTIM2_PRESCALER ((uint16_t)0x0000)
-#define ONE_MS_PER_TICK_PRESCALER ((uint16_t)((SystemCoreClock - 1) / 1000))
-
-/* Maximum possible setting for overflow */
+#define myTIM3_PRESCALER ((uint16_t)47999)
 #define myTIM2_PERIOD ((uint32_t)0xFFFFFFFF)
-#define LCD_UPDATE_PERIOD_MS ((uint32_t)250)
-
-/* Circuit tuning parameterss */
-#define RESISTANCE_MAX_VALUE (5000.0) // PBMCUSLK uses a 5k pot
-#define ADC_MAX_VALUE ((float)(0xFFF)) // ADC bit resolution (12 by default)
-#define DAC_MAX_VALUE ((float)(0xFFF)) // DAC bit resolution (12 by default)
-#define DAC_MAX_VOLTAGE (2.95) // measured output from PA4 when DAC->DHR12R1 = DAC_MAX_VALUE
-#define OPTO_DEADBAND_END_VOLTAGE (1.0) // voltage needed to overcome diode
 
 void myGPIOA_Init(void);
 void myTIM2_Init(void);
-void myTIM16_Init(void);
+void myTIM3_Init(void);
 void myEXTI_Init(void);
 void myADC_Init(void);
 void myDAC_Init(void);
-uint32_t getPotADCValue(void);
 
 // Your global variables...
-float signalFrequency = 0.0;
-float resistance = 0.0;
+/* Elapsed timer pulses */
+uint32_t timerPulses = 0;
+/* TIM2 flag */
+uint32_t timerActive = 0;
+
+uint16_t DAC_converted = 0;
+unsigned int signalFrequency = 0;
+unsigned int voltage = 0;
+uint16_t resistance = 0;
 
 int
 main(int argc, char* argv[])
+
 {
 
 	trace_printf("This is Part 2 of Introductory Lab...\n");
@@ -75,26 +72,37 @@ main(int argc, char* argv[])
 
 	myGPIOA_Init();		/* Initialize I/O port PA */
 	myTIM2_Init();		/* Initialize timer TIM2 */
+	myTIM3_Init();		/* Initialize timer TIM3 */
 	myEXTI_Init();		/* Initialize EXTI */
-	myADC_Init();
-	myDAC_Init();
-	LCD_Config();
-	myTIM16_Init();
+	myADC_Init();		/* Initialize ADC */
+	myDAC_Init();		/* Initialize DAC */
+	LCD_Config();		/* Configure and initialize LCD */
+
 
 	while (1)
 	{
-		/*Get ADC value*/
-		uint32_t potADCValue = getPotADCValue();
-		
-        /* Update the DAC value */
-        DAC->DHR12R1 = potADCValue;
+		/*Trigger ADC conversion in Software */
+		ADC1->CR |= 0x00000004;
 
-        /* Convert to resistance range */
-        float normalizedPotADC = (((float)potADCValue) / ADC_MAX_VALUE);
-        resistance = normalizedPotADC * RESISTANCE_MAX_VALUE;
+		/* Test EOC flag */
+		while((ADC1->ISR & 0x00000004)==0){};
 
-        trace_printf("ADC Value: %d\n", potADCValue);
-        trace_printf("Resistance: %f\n", resistance);
+		/* calculate the voltage */
+		voltage = (unsigned int)(ADC1->DR);
+		DAC->DHR12R1=(voltage);
+		/* Get ADC1 converted data */
+		DAC_converted = DAC->DOR1;
+
+		/* Resistance calculations */
+		float rescalc = 5000*((4095 - ((float)DAC_converted))/4095 );
+		resistance = ((uint16_t)rescalc);
+
+		/*Computer Console prints */
+		trace_printf("Frequency:%d\n", (int)signalFrequency);
+		trace_printf("voltage:%d\n",(int)voltage);
+		trace_printf("Resistance:%d\n\n",(int)resistance);
+
+		LCD_SetValues(resistance, signalFrequency);
 	}
 
 	return 0;
@@ -106,44 +114,40 @@ void myGPIOA_Init()
 {
 	/* Enable clock for GPIOA peripheral */
 	// Relevant register: RCC->AHBENR
-	RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
-	
-	/* Configure PA0 as input */
-	// Relevant register: GPIOA->MODER
-	GPIOA->MODER &= ~(GPIO_MODER_MODER0);
 
-	/* Ensure no pull-up/pull-down for PA1 */
-	// Relevant register: GPIOA->PUPDR
-	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPDR1);
+	RCC->AHBENR |= 0x00020000;
 
 	/* Configure PA1 as input */
 	// Relevant register: GPIOA->MODER
-	GPIOA->MODER &= ~(GPIO_MODER_MODER1);
+
+	GPIOA->MODER |= 0x28000000;
 
 	/* Ensure no pull-up/pull-down for PA1 */
 	// Relevant register: GPIOA->PUPDR
-	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPDR1);
-	
-	/* Configure PA4 as input */
-	// Relevant register: GPIOA->MODER
-	GPIOA->MODER &= ~(GPIO_MODER_MODER4);
 
-	/* Ensure no pull-up/pull-down for PA1 */
-	// Relevant register: GPIOA->PUPDR
-	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPDR4);
+	GPIOA->PUPDR |= 0x24000000;
 }
 
 
 void myTIM2_Init()
 {
-	/* Enable clock for TIM2 peripheral */
+	 /* Enable clock for TIM2 peripheral */
 	// Relevant register: RCC->APB1ENR
+
 	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
 
 	/* Configure TIM2: buffer auto-reload, count up, stop on overflow,
 	 * enable update events, interrupt on overflow only */
 	// Relevant register: TIM2->CR1
-	TIM2->CR1 = ((uint16_t)0x008C);
+
+	//TIM2->CR1 |= 0x00C8;     //set auto-reload
+	TIM2->CR1 = ((uint16_t) 0x008C);
+
+	//TIM2->CR1 |= 0x0004;    //interrupt on overflow only
+	//TIM2->CR1 |= 0x0008;	//stop on overflow
+	//TIM2->CR1 &= ~(0x0060); //set CMS to follow DIR bit
+	//TIM2->CR1 &= ~(0x0010); //set DIR bit as upcounter
+	//TIM2->CR1 &= ~(0x0002);    //enable update events
 
 	/* Set clock prescaler value */
 	TIM2->PSC = myTIM2_PRESCALER;
@@ -152,48 +156,59 @@ void myTIM2_Init()
 
 	/* Update timer registers */
 	// Relevant register: TIM2->EGR
-	TIM2->EGR = ((uint16_t)0x0001);
+
+	TIM2->EGR |= 0x0001;
 
 	/* Assign TIM2 interrupt priority = 0 in NVIC */
 	// Relevant register: NVIC->IP[3], or use NVIC_SetPriority
+
 	NVIC_SetPriority(TIM2_IRQn, 0);
 
 	/* Enable TIM2 interrupts in NVIC */
 	// Relevant register: NVIC->ISER[0], or use NVIC_EnableIRQ
+
 	NVIC_EnableIRQ(TIM2_IRQn);
 
 	/* Enable update interrupt generation */
 	// Relevant register: TIM2->DIER
+
 	TIM2->DIER |= TIM_DIER_UIE;
-	/* Start counting timer pulses */
-	TIM2->CR1 |= TIM_CR1_CEN;
+	//TIM2->CR1 |= TIM_CR1_CEN;
 }
 
 
 
 void myEXTI_Init()
 {
-	/* Map EXTI1 line to PA1 */
-	// Relevant register: SYSCFG->EXTICR[0]
-	SYSCFG->EXTICR[0] &= 0x0000FF0F;
 
-	/* EXTI1 line interrupts: set rising-edge trigger */
-	// Relevant register: EXTI->RTSR
-	EXTI->RTSR |= EXTI_RTSR_TR1;
+	/*/* Enable GPIOA clock
+    RCC->AHBENR |= 0x00020000;
+	// Clear PA1 field = IN mode
+    GPIOA->MODER |= 0x28000000;
+	//Clear PA1 field = NO pull­up/down
+    GPIOA->PUPDR |= 0x24000000;
+    */
+    /* Map EXTI1 line to PA1 */
+    // Relevant register: SYSCFG->EXTICR[0]
+    SYSCFG->EXTICR[0] &=  ~(SYSCFG_EXTICR1_EXTI1); //set EXTI0[3:0] to 0000
 
-	/* Unmask interrupts from EXTI1 line */
-	// Relevant register: EXTI->IMR
-	EXTI->IMR |= EXTI_IMR_MR1;
+    /* EXTI1 l
+     * define interrupts: set rising-edge trigger */
+    // Relevant register: EXTI->RTSR
+    EXTI->RTSR |= EXTI_RTSR_TR1;
 
-	/* Assign EXTI1 interrupt priority = 0 in NVIC */
-	// Relevant register: NVIC->IP[1], or use NVIC_SetPriority
-	NVIC_SetPriority(EXTI0_1_IRQn,0);
+    /* Unmask interrupts from EXTI1 line */
+    // Relevant register: EXTI->IMR
+    EXTI->IMR |= EXTI_IMR_MR1;
 
-	/* Enable EXTI1 interrupts in NVIC */
-	// Relevant register: NVIC->ISER[0], or use NVIC_EnableIRQ
-	NVIC_EnableIRQ(EXTI0_1_IRQn);
+    /* Assign EXTI1 interrupt priority = 0 in NVIC */
+    // Relevant register: NVIC->IP[1], or use NVIC_SetPriority
+    NVIC_SetPriority(EXTI0_1_IRQn,0);
+
+    /* Enable EXTI1 interrupts in NVIC */
+    // Relevant register: NVIC->ISER[0], or use NVIC_EnableIRQ
+    NVIC_EnableIRQ(EXTI0_1_IRQn);
 }
-
 
 /* This handler is declared in system/src/cmsis/vectors_stm32f0xx.c */
 void TIM2_IRQHandler()
@@ -201,7 +216,6 @@ void TIM2_IRQHandler()
 	/* Check if update interrupt flag is indeed set */
 	if ((TIM2->SR & TIM_SR_UIF) != 0)
 	{
-		trace_printf("\n*** Overflow! ***\n");
 
 		/* Clear update interrupt flag */
 		// Relevant register: TIM2->SR
@@ -213,68 +227,74 @@ void TIM2_IRQHandler()
 	}
 }
 
-void myTIM16_Init()
+void myTIM3_Init(void)
 {
-    RCC->APB2ENR |= RCC_APB2ENR_TIM16EN; /*Enable clock for TIM16*/
-	
-    TIM16->CR1 = ((uint16_t) 0x008C); /* Set-up TIM16 */    
-	
-    TIM16->PSC = ONE_MS_PER_TICK_PRESCALER; /* Set-up clock prescaler */
-	
-    TIM16->ARR = LCD_UPDATE_PERIOD_MS;  /* Set-up auto-reloaded delay */
-	
-    TIM16->EGR = ((uint16_t) 0x0001); /* Timer Update */
-	
-    NVIC_SetPriority(TIM16_IRQn, 1); /* Set-up TIM16 interrupt priority = 1 in NVIC (gets triggered by edge measurments, from P0) */
-    
-    NVIC_EnableIRQ(TIM16_IRQn); /* Enable TIM16 interrupts in NVIC */
 
-    TIM16->DIER |= TIM_DIER_UIE; /* Enable update interrupt generation */
+	/* Enable clock for TIM3 peripheral */
 
-    /* Start counting timer pulses */
-    TIM16->CR1 |= TIM_CR1_CEN;
+    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+
+
+	/* Configure TIM3: buffer auto­reload, count up, stop on overflow,
+	 * enable update events, interrupt on overflow only */
+
+    TIM2->CR1 = ((uint16_t) 0x008C);
+
+
+	/* Set clock prescaler value: 48MHz/(47999+1) = 1 KHz */
+    TIM3->PSC = myTIM3_PRESCALER;
+
+	/* Default auto­reloaded delay: 100 ms */
+    TIM3->ARR = 100;
+
+	/* Update timer registers */
+    TIM3->EGR |= 0x0001;
+
+
 }
 
 
-void myADC_Init(){
-    /* Enable clock for ADC */
-    RCC->APB2ENR |= RCC_APB2ENR_ADCEN;
 
-    /* Begin ADC Callibration*/
-    ADC1->CR = ADC_CR_ADCAL;
-    while (ADC1->CR == ADC_CR_ADCAL) {};
-
-    /* Configure ADC */
-    ADC1->CFGR1 |= (ADC_CFGR1_CONT | ADC_CFGR1_OVRMOD);
-
-    /* Select Channel 0 for PA0*/
-    ADC1->CHSELR = ADC_CHSELR_CHSEL0;
-
-    /* Enable ADC */
-    ADC1->CR |= ADC_CR_ADEN;
-    while (!(ADC1->ISR & ADC_ISR_ADRDY)) {};
-}
-
-void myDAC_Init() {
-    /* Enable DAC clock */
-    RCC->APB1ENR |= RCC_APB1ENR_DACEN;
-
-    /* Enable DAC */
-    DAC->CR |= DAC_CR_EN1;
-}
-
-void TIM16_IRQHandler()
+void myADC_Init()
 {
-    /* Check if update interrupt flag is set */
-    if ((TIM16->SR & TIM_SR_UIF) != 0) {
-		LCD_SetValues(resistance, signalFrequency);
+    //make pc1 input and analog
+    //check ADC -> SR for the EOC bit, if 1 then read the data, otherwise do nothing
+    RCC->AHBENR |= 0x00080000;    //enable clock on port C
 
-        /* Clear update interrupt flag */
-        TIM16->SR &= ~(TIM_SR_UIF);
+    GPIOC->MODER |= 0x000000c0; //set mode to analog input
+	GPIOC->PUPDR |= 0x24000000;
 
-        /* Restart timer */
-        TIM16->CR1 |= TIM_CR1_CEN;
-    }
+	RCC->APB2ENR |=0x00000200; //enable ADC clock
+
+
+
+	ADC1->CFGR1 &=~(0x00000020); //continuous
+	ADC1->CFGR1 |=0x00002000;
+
+	ADC1->SMPR |= 0x00000007; //sample length
+
+	ADC1->CHSELR |=0x00000800; //mapped to port c1
+
+	ADC1->CR |= 0x80000000; //12 bit resolution
+	while((ADC1->CR & 0x80000000) !=0);
+	ADC1->CR |=0x00000001;
+	while((ADC1->ISR & 0x00000001) ==0);
+}
+
+void myDAC_Init()
+{
+
+    RCC->APB1ENR|= 0x20000000; // Enable DAC clock
+
+    GPIOC->MODER|= 0x00000300;
+
+    DAC->CR &= 0xfffffcff;
+
+    DAC->CR|=0x00000000; // set bit
+
+    DAC->CR|=0x00000001; //enable bit to channel 1
+
+
 }
 
 /* This handler is declared in system/src/cmsis/vectors_stm32f0xx.c */
@@ -289,28 +309,28 @@ void EXTI0_1_IRQHandler()
 	if ((EXTI->PR & EXTI_PR_PR1) != 0)
 	{
 		TimerTriggered = (TIM2->CR1 & TIM_CR1_CEN);
-		
+
 		if (TimerTriggered) {
 			/* Stop timer */
 			/* get timer value */
 			TIM2->CR1 &= ~(TIM_CR1_CEN);
 			CountRegister = TIM2->CNT;
-			
+
 			if(CountRegister < SystemCoreClock){
 
 				signalFrequency = ((double)SystemCoreClock)/((double)CountRegister);
 				signalPeriod = 1/signalFrequency;
-			
-				trace_printf("Signal Period: %f \n", (float)(signalPeriod));
-				trace_printf("Signal Frequency: %f \n", (float)signalFrequency);
-				
+
+				//trace_printf("Signal Period: %f \n", (float)(signalPeriod));
+				//trace_printf("Signal Frequency: %f \n", (float)signalFrequency);
+
 			}else{
-				
+
 				signalPeriod = ((double)CountRegister)/((double)SystemCoreClock);
 				signalFrequency = 1/signalPeriod;
 
-				trace_printf("Signal Period: %f \n", (float)signalPeriod );
-				trace_printf("Signal Frequency: %f \n", (float)(signalFrequency));
+				//trace_printf("Signal Period: %f \n", (float)signalPeriod );
+				//trace_printf("Signal Frequency: %f \n", (float)(signalFrequency));
 			}
 
 		} else {
@@ -322,20 +342,6 @@ void EXTI0_1_IRQHandler()
 		/* clear EXT1 */
 		EXTI->PR |= EXTI_PR_PR1;
 	}
-}
-
-uint32_t getPotADCValue(){
-    /* start ADC */
-    ADC1->CR |= ADC_CR_ADSTART;
-
-    /* loop till end */
-    while (!(ADC1->ISR & ADC_ISR_EOC)) {};
-
-    /* reset EOC flag */
-    ADC1->ISR &= ~(ADC_ISR_EOC);
-
-    /* Apply data mask to data register */
-    return ((ADC1->DR) & ADC_DR_DATA);
 }
 
 #pragma GCC diagnostic pop
