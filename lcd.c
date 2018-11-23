@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "stm32f0xx_gpio.h"
 #include "stm32f0xx_rcc.h"
 #include "stm32f0xx_spi.h"
@@ -7,21 +8,14 @@
 #include "assert.h"
 #include "lcd.h"
 
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #pragma GCC diagnostic ignored "-Wreturn-type"
 
-void LCD_SetValues(float resistance, float frequency)
+void LCD_SetValues(uint16_t resistance, unsigned int frequency)
 {
-
-	LCD_SetPosition(1,1);
-	
-	Write_Text_to_lcd("F:");
-
-	Write_numb_to_lcd(frequency);
-
-	Write_Text_to_lcd("Hz");
 
 	LCD_SetPosition(2,1);
 
@@ -30,6 +24,14 @@ void LCD_SetValues(float resistance, float frequency)
 	Write_numb_to_lcd(resistance);
 
 	Write_Text_to_lcd("Oh");
+
+	LCD_SetPosition(1,1);
+
+	Write_Text_to_lcd("F:");
+
+	Write_numb_to_lcd(frequency);
+
+	Write_Text_to_lcd("Hz");
 
 	time_Delay(250);
 
@@ -40,7 +42,7 @@ void LCD_Config()
 	myGPIOB_Init(); /* Initialize GPIOB */
 	mySPI_Init();	/* Initialize SPI */
 	LCD_Init();		 /* Initialize LCD */
-	trace_printf("\n LCD initialization complete\n");
+	trace_printf("\nLCD initialization complete\n");
 }
 
 
@@ -133,10 +135,6 @@ void Write_HC595(char data)
 
 	// LCK = 1 (rising edge)
 	GPIOB->BSRR = GPIO_Pin_4;
-
-	//time_Delay(2); // 2­ms delay (slow LCD)
-
-
 }
 
 
