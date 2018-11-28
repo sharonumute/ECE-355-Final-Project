@@ -56,7 +56,7 @@ uint32_t timerPulses = 0;
 /* TIM2 flag */
 uint32_t timerActive = 0;
 
-uint16_t DAC_converted = 0;
+uint16_t DAC_voltage = 0;
 unsigned int signalFrequency = 0;
 unsigned int voltage = 0;
 uint16_t resistance = 0;
@@ -90,11 +90,11 @@ int main(int argc, char *argv[])
         voltage = (unsigned int)(ADC1->DR);
         DAC->DHR12R1 = (voltage);
         /* Get ADC1 converted data */
-        DAC_converted = DAC->DOR1;
+        DAC_voltage = DAC->DOR1;
 
         /* Resistance calculations */
-        float rescalc = 5000 * ((4095 - ((float)DAC_converted)) / 4095);
-        resistance = ((uint16_t)rescalc);
+        float lcd_adjusted_value = 5000 * ((4095 - ((float)DAC_voltage)) / 4095);
+        resistance = ((uint16_t)lcd_adjusted_value);
 
         /*Computer Console prints */
         trace_printf("Frequency:%d\n", (int)signalFrequency);
