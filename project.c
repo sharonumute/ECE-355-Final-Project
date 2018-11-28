@@ -196,6 +196,8 @@ void TIM2_IRQHandler()
     /* Check if update interrupt flag is indeed set */
     if ((TIM2->SR & TIM_SR_UIF) != 0)
     {
+        trace_printf("\n*** Overflow! ***\n");
+
         /* Clear update interrupt flag */
         // Relevant register: TIM2->SR
         TIM2->SR &= ~(TIM_SR_UIF);
